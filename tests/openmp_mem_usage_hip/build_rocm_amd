@@ -1,0 +1,39 @@
+#!/bin/sh
+# Copyright (c) 2019-20, Lawrence Livermore National Security, LLC. and other
+# Goulash project contributors LLNL-CODE-795383, All rights reserved.
+# For details about use and distribution, please read LICENSE and NOTICE from
+# the Goulash project repository: http://github.com/llnl/goulash
+# SPDX-License-Identifier: BSD-3-Clause
+
+# Example build with ROCM 10.0.0 targetting AMD MI100
+
+# Example build of openmp_mem_usage_hip.cc on that worked on Cray's Redwood
+# AMD MI100 GPUs with rocm/10.0.0's compiler on 12/14/20.  
+# This script directly runnable on Cray's Redwood.
+# -John Gyllenhaal/LLNL
+
+echo "Build for Cray's redwood using rocm/10.0.0"
+
+export ROCM_PATH="/opt/rocm-3.10.0/aomp/bin"
+export HIP_PATH="/opt/rocm-3.10.0"
+
+# Echo build commands actually run to screen
+# Use null command : to "echo" info to screen with set -x
+set -x
+
+:
+: Build OpenMP GPU offloading version with hipHostMalloc and HIP library calls
+$ROCM_PATH/clang++ -O3 -fopenmp -fopenmp-targets=amdgcn-amd-amdhsa -Xopenmp-target=amdgcn-amd-amdhsa -march=gfx908 -I$HIP_PATH/include -D__HIP_PLATFORM_HCC__ openmp_mem_usage_hip.cc -L$HIP_PATH/lib -L$HIP_PATH/hiplib -Wl,--rpath=$HIP_PATH/hip/lib:$HIP_PATH/lib -lamdhip64 -o openmp_mem_usage_hip_rocm_amd
+
+:
+: Build OpenMP GPU offloading version with hipHostMalloc and leak that pinned memory
+$ROCM_PATH/clang++ -DLEAK_HOST_MEM -O3 -fopenmp -fopenmp-targets=amdgcn-amd-amdhsa -Xopenmp-target=amdgcn-amd-amdhsa -march=gfx908 -I$HIP_PATH/include -D__HIP_PLATFORM_HCC__ openmp_mem_usage_hip.cc -L$HIP_PATH/lib -L$HIP_PATH/hiplib -Wl,--rpath=$HIP_PATH/hip/lib:$HIP_PATH/lib -lamdhip64 -o openmp_mem_usage_hip_rocm_amd_leak
+
+:
+: Build OpenMP GPU offloading version with unpinned calloc mem and HIP library calls
+$ROCM_PATH/clang++ -DUSE_CALLOC -O3 -fopenmp -fopenmp-targets=amdgcn-amd-amdhsa -Xopenmp-target=amdgcn-amd-amdhsa -march=gfx908 -I$HIP_PATH/include -D__HIP_PLATFORM_HCC__ openmp_mem_usage_hip.cc -L$HIP_PATH/lib -L$HIP_PATH/hiplib -Wl,--rpath=$HIP_PATH/hip/lib:$HIP_PATH/lib -lamdhip64 -o openmp_mem_usage_hip_rocm_amd_calloc
+
+:
+: Build non-OpenMP version with HIP to get GPU memory usage baseline without OpenMP runtime
+$ROCM_PATH/clang++ -DNO_OPENMP -O3 -I$HIP_PATH/include -D__HIP_PLATFORM_HCC__  openmp_mem_usage_hip.cc -L$HIP_PATH/lib -L$HIP_PATH/hiplib -Wl,--rpath=$HIP_PATH/hip/lib:$HIP_PATH/lib -lamdhip64 -o openmp_mem_usage_hip_rocm_amd_noopenmp
+

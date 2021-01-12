@@ -1,0 +1,51 @@
+#!/bin/bash -l
+# Copyright (c) 2019-20, Lawrence Livermore National Security, LLC. and other
+# Goulash project contributors LLNL-CODE-795383, All rights reserved.
+# For details about use and distribution, please read LICENSE and NOTICE from
+# the Goulash project repository: http://github.com/llnl/goulash
+# SPDX-License-Identifier: BSD-3-Clause
+
+# Example build with cce 11 for MI100
+
+# Example build of openmp_mem_usage_hip.cc on that worked on Cray's Redwood
+# AMD MI100 GPUs with CCE/11.0.0 compiler on 12/14/20.
+# This script directly runnable on Cray's Redwood.
+# -John Gyllenhaal/LLNL
+
+cat <<EOF
+ On Redwood on 12/10/20, I (John Gyllenhaal) did this to get a bash shell on a MI100 compute node:
+salloc -N 1 -pamdMI100 -t 60 --exclusive srun -n1 -N1 --mem-per-cpu=0 --pty --preserve-env --mpi=none  /bin/bash
+ Then may want to run on socket 1 (close to GPUs, but not critical in this test) with:
+srun -n 1 --cpu-bind=map_ldom:1 --mem-bind=local ./openmp_mem_usage_hip_cce_amd 1 31
+EOF
+
+echo "Loading Cray env with no MPI or cray-libsci"
+module -s purge
+module -s restore PrgEnv-cray
+module -s unload cray-mvapich2
+module -s unload cray-libsci
+module -s load rocm/3.8.0
+module -s load craype-accel-amd-gfx908
+module list
+
+# Echo build commands actually run to screen
+# Use null command : to "echo" info to screen with set -x
+set -x 
+
+:
+: Build OpenMP GPU offloading version with hipHostMalloc and HIP library calls
+CC -Ofast -fopenmp -I$HIP_PATH/include -I$HIP_PATH/../include -D__HIP_PLATFORM_HCC__ openmp_mem_usage_hip.cc  -L$HIP_LIB_PATH -lamdhip64 -Wl,--disable-new-dtags,-rpath,$HIP_LIB_PATH -add-rpath -o openmp_mem_usage_hip_cce_amd
+
+:
+: Build OpenMP GPU offloading version with hipHostMalloc and leak that pinned memory
+CC -DLEAK_HOST_MEM -Ofast -fopenmp -I$HIP_PATH/include -I$HIP_PATH/../include -D__HIP_PLATFORM_HCC__ openmp_mem_usage_hip.cc  -L$HIP_LIB_PATH -lamdhip64 -Wl,--disable-new-dtags,-rpath,$HIP_LIB_PATH -add-rpath -o openmp_mem_usage_hip_cce_amd_leak
+
+:
+: Build OpenMP GPU offloading version with unpinned calloc mem and HIP library calls
+CC -DUSE_CALLOC -Ofast -fopenmp -I$HIP_PATH/include -I$HIP_PATH/../include -D__HIP_PLATFORM_HCC__ openmp_mem_usage_hip.cc  -L$HIP_LIB_PATH -lamdhip64 -Wl,--disable-new-dtags,-rpath,$HIP_LIB_PATH -add-rpath -o openmp_mem_usage_hip_cce_amd_calloc
+
+
+:
+: Build non-OpenMP version with HIP to get GPU memory usage baseline without OpenMP runtime
+CC -DNO_OPENMP -Ofast -I$HIP_PATH/include -I$HIP_PATH/../include -D__HIP_PLATFORM_HCC__ openmp_mem_usage_hip.cc  -L$HIP_LIB_PATH -lamdhip64 -Wl,--disable-new-dtags,-rpath,$HIP_LIB_PATH -o openmp_mem_usage_hip_cce_amd_noopenmp
+

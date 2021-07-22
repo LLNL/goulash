@@ -1,4 +1,4 @@
-Goulash
+# Goulash
 rush_larsen_gpu_lambda_hip_mpi
 
 This is a single file C++ test mechanically generated from rush_larsen/Generator/rush_larsen_cxx_template.cc.   It will be overwritten if rush_larsen/Generator/generate_source is run.  

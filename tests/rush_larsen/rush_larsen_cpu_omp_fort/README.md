@@ -1,4 +1,4 @@
-Goulash
+# Goulash
 rush_larsen_cpu_omp_fort
 
 This is a single file Fortran 2003 test mechanically generated from rush_larsen/Generator/rush_larsen_fort_template.F90.   It will be overwritten if rush_larsen/Generator/generate_source is run.   The fortran was hand generated in an attempt to replicate the C++ functionality and results.

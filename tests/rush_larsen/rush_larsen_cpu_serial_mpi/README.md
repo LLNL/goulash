@@ -1,5 +1,4 @@
-# Goulash
-rush_larsen_cpu_serial_mpi
+# Goulash rush_larsen_cpu_serial_mpi
 
 This is a single file C++ test mechanically generated from rush_larsen/Generator/rush_larsen_cxx_template.cc.   It will be overwritten if rush_larsen/Generator/generate_source is run.  
 

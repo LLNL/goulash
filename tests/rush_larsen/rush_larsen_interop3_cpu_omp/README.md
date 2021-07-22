@@ -1,5 +1,4 @@
-# Goulash
-rush_larsen_interop3_cpu_omp
+# Goulash rush_larsen_interop3_cpu_omp
 
 This is a multi-file C++ and Fortran interoperability test mechanically generated from rush_larsen/Generator/rush_larsen_interop_template.cc, rush_larsen/Generator/rush_larsen_cxx_template.cc, and rush_larsen/Generator/rush_larsen_fort_template.F90.   All source code and the Makefile will be overwritten if rush_larsen/Generator/generate_source is run.  
 

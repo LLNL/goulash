@@ -143,7 +143,7 @@ function inst_readme()
   mkdir -p $TARGET_DIR
   cp $TEMPLATE_FILE ${TARGET_DIR}/README.md
 
-  patch_line ${TARGET_DIR}/README.md "#BENCHMARKNAME" "$BENCHMARK_NAME"
+  patch_line ${TARGET_DIR}/README.md "#BENCHMARKNAME" "# Goulash $BENCHMARK_NAME"
   echo "Generated ${TARGET_DIR}/README.md"
 }
 

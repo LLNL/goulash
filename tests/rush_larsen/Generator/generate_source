@@ -1,0 +1,444 @@
+#!/bin/bash
+#
+# Copyright (c) 2019-21, Lawrence Livermore National Security, LLC. and other
+# Goulash project contributors LLNL-CODE-795383, All rights reserved.
+# For details about use and distribution, please read LICENSE and NOTICE from
+# the Goulash project repository: http://github.com/llnl/goulash
+# SPDX-License-Identifier: BSD-3-Clause
+
+COMPILER_MAKE_DEF_FILE=(not_used for_compiler1 for_compiler2 for_compiler3)
+
+if [[ $# -ne 3 ]]; then
+   echo "Generates all rush_larsen tests include up to 3 compiler interop tests"
+   echo "plus generates make files using compiler setting in the passed make-def files"
+   echo " "
+   echo "Usage: $0 compiler1-makedefs compiler2-makedefs compiler3-makedefs"
+   echo " "
+   echo "  Goulash github rush_larsen tests created with:"
+   echo "    $0 cce-12.0.1-makedefs rocmcc-4.2.0-makedefs gcc-10.2.1-makedefs"
+   echo " "
+   echo "  Start testing with just one compiler by repeating same defs three times:"
+   echo "    $0 cce-12.0.1-makedefs cce-12.0.1-makedefs cce-12.0.1-makedefs"
+   echo "    $0 rocmcc-4.2.0-makedefs rocmcc-4.2.0-makedefs rocmcc-4.2.0-makedefs"
+   echo " "
+   echo "Recommend starting with individual tests first before doing interop versions"
+   echo " "
+   echo "NOTE: In each directory, 'make' builds test and 'make check' runs test"
+   echo " "
+   echo "WARNING: Overwrites all Makefiles and source files in ../rush_larsen*!"
+   echo "         You may want to run rm -rf ../rush_larsen_* before this command"
+   exit 1
+fi
+
+# Grab makedef files
+COMPILER_MAKE_DEF_FILE[1]=$1
+COMPILER_MAKE_DEF_FILE[2]=$2
+COMPILER_MAKE_DEF_FILE[3]=$3
+
+echo "Pushing any template updates to rush_larsen directories, overwriting existing source"
+
+for ID in {1..3}
+do
+   if [[ ! -f ${COMPILER_MAKE_DEF_FILE[$ID]} ]]; then
+     echo "Error: compiler${ID} makedef file not found: ${COMPILER_MAKE_DEF_FILE[$ID]} "
+     exit 1
+   fi
+   echo compiler${ID}-makedefs: ${COMPILER_MAKE_DEF_FILE[${ID}]}
+done
+echo " "
+
+function patch_line() 
+{
+  TARGET_FILE=$1
+  TARGET_LINE=$2
+  NEW_LINE=$3
+  #echo "PATCH_LINE '$TARGET_FILE' '$TARGET_LINE' '$NEW_LINE'"
+
+  FOUND_LINE=`grep "$TARGET_LINE" ${TARGET_FILE}`
+  if [[ "$FOUND_LINE" == "$TARGET_LINE" ]]; then
+    /usr/bin/sed -i "s|${TARGET_LINE}|${NEW_LINE}|g" ${TARGET_FILE}
+  else
+    echo "ERROR: Did not find required '$TARGET_LINE' in ${TARGET_FILE}"
+    exit 1
+  fi
+}
+
+function patch_string() 
+{
+  TARGET_FILE=$1
+  TARGET_STRING=$2
+  NEW_STRING=$3
+
+  FOUND_STRING=`grep "$TARGET_STRING" ${TARGET_FILE}`
+  if [[ "$FOUND_STRING" == ${TARGET_STRING}* ]]; then
+    /usr/bin/sed -i "s|${TARGET_STRING}|${NEW_STRING}|g" ${TARGET_FILE}
+  else
+    echo "ERROR: Did not find required '$TARGET_STRING' in ${TARGET_FILE}"
+    exit 1
+  fi
+}
+
+function patch_if_not_there()
+{
+  TEST_STRING=$1
+  TARGET_FILE=$2
+  shift
+   
+  # Run patch line if string not already in file
+  FOUND_STRING=`grep "$TEST_STRING" ${TARGET_FILE}`
+  if [[ "$FOUND_STRING" != ${TEST_STRING}* ]]; then
+     patch_line "$@"
+  fi
+}
+
+function verify_line_exists() 
+{
+  TARGET_FILE=$1
+  TARGET_LINE=$2
+
+  #echo "verify_line_exists: " "$@"
+
+  FOUND_LINE=`grep "$TARGET_LINE" ${TARGET_FILE}`
+  if [[ "$FOUND_LINE" == "" ]]; then
+    echo "ERROR: Did not find required '$TARGET_LINE' in ${TARGET_FILE}"
+    exit 1
+  fi
+}
+
+function inst_template() 
+{
+  TARGET_DIR=$1
+  TEMPLATE_FILE=$2
+  DEST_FILE=$3
+  VARIANT_ID=$4
+  shift
+  shift
+  shift
+  shift
+  ENABLE_FEATURES="$@"
+
+  mkdir -p $TARGET_DIR
+  cp $TEMPLATE_FILE ${TARGET_DIR}/${DEST_FILE}
+
+  # If not "", define VARIANT_ID in the file
+  if [[ "$VARIANT_ID" != "" ]]; then
+    patch_line ${TARGET_DIR}/${DEST_FILE} "#undef  VARIANT_ID" "#define VARIANT_ID $VARIANT_ID"
+  fi
+
+  # Define every feature passed in after arg 4
+  for FEATURE in $ENABLE_FEATURES
+  do
+    patch_line ${TARGET_DIR}/${DEST_FILE} "#undef  $FEATURE" "#define $FEATURE"
+  done
+
+  echo "Generated ${TARGET_DIR}/${DEST_FILE} with '$VARIANT_ID' $ENABLE_FEATURES"
+}
+
+function inst_readme() 
+{
+  TARGET_DIR=$1
+  TEMPLATE_FILE=$2
+  BENCHMARK_NAME=$3
+
+  mkdir -p $TARGET_DIR
+  cp $TEMPLATE_FILE ${TARGET_DIR}/README.md
+
+  patch_line ${TARGET_DIR}/README.md "#BENCHMARKNAME" "# Goulash $BENCHMARK_NAME"
+  echo "Generated ${TARGET_DIR}/README.md"
+}
+
+function initialize_makefile() 
+{
+  TARGET_DIR=$1
+
+  mkdir -p $TARGET_DIR
+  cp makefile_variant_template ${TARGET_DIR}/Makefile
+
+  # Make the clean line with no files there
+  patch_line ${TARGET_DIR}/Makefile "# PREPEND MAKE RULES HERE" "# PREPEND MAKE RULES HERE\nclean:\n	rm -f "
+
+}
+
+function finalize_makefile() 
+{
+  TARGET_DIR=$1
+
+
+  # Remove the marker we used to place the make defs
+  patch_line ${TARGET_DIR}/Makefile "# REPLACE WITH MAKE DEFS HERE" " "
+
+  # Remove the marker we used to place the build rules
+  patch_line ${TARGET_DIR}/Makefile "# PREPEND MAKE RULES HERE" " "
+
+}
+
+function add_build_rule()
+{
+  COMPILER_ID=$1 
+  PARENT_RULE=$2
+  COMP_PREFIX=$3
+  MODE_FLAG=$4
+  EXE_FILE=$5
+  ICONFIG=$6
+  LANG=$7
+  TARGET_DIR=$8
+  SRC_FILE=$9
+  VARIANT_ID=$10
+
+  #echo "add_build_rule got:" "$@"
+
+  # Indicate where the values came from
+  patch_line ${TARGET_DIR}/Makefile "# REPLACE WITH MAKE DEFS HERE" "\n# Pulled from ${COMPILER_MAKE_DEF_FILE[$COMPILER_ID]} for building $EXE_FILE\n# REPLACE WITH MAKE DEFS HERE"
+
+  # Query compiler make def file for compiler, flags, and tag and
+  # add to Makefile
+  for VAR_NAME in ${LANG} CPPFLAGS ${LANG}FLAGS COMPILERID LDFLAGS LDLIBS
+  do
+    verify_line_exists ${COMPILER_MAKE_DEF_FILE[$COMPILER_ID]} "${VAR_NAME}_${ICONFIG^^} :="
+    VAR_DEF=`make -f ${COMPILER_MAKE_DEF_FILE[$COMPILER_ID]} print-${VAR_NAME}_${ICONFIG^^}`
+    if [[ "$VAR_NAME" == "COMPILERID" ]]; then
+      if [[ "$LANG" == "FC" ]]; then
+	patch_if_not_there "${COMP_PREFIX}${VAR_NAME} =" ${TARGET_DIR}/Makefile "# REPLACE WITH MAKE DEFS HERE" "${COMP_PREFIX}${VAR_NAME} = '-DCOMPILERID=\"${VAR_DEF}\"'\n# REPLACE WITH MAKE DEFS HERE"
+      else
+	patch_if_not_there "${COMP_PREFIX}${VAR_NAME} =" ${TARGET_DIR}/Makefile "# REPLACE WITH MAKE DEFS HERE" "${COMP_PREFIX}${VAR_NAME} = -DCOMPILERID=${VAR_DEF}\n# REPLACE WITH MAKE DEFS HERE"
+      fi
+    else
+      patch_if_not_there "${COMP_PREFIX}${VAR_NAME} =" ${TARGET_DIR}/Makefile "# REPLACE WITH MAKE DEFS HERE" "${COMP_PREFIX}${VAR_NAME} = ${VAR_DEF}\n# REPLACE WITH MAKE DEFS HERE"
+    fi
+  done
+
+  # Add the executable name to the ${PARENT_RULE} line
+  patch_string ${TARGET_DIR}/Makefile "${PARENT_RULE}" "${PARENT_RULE} $EXE_FILE"
+
+  # Make the build line, don't use LDFLAGS and LDLIBS with -c compiles
+  if [[ "${MODE_FLAG}" == *-c* ]]; then
+      patch_line ${TARGET_DIR}/Makefile "# PREPEND MAKE RULES HERE" "$EXE_FILE: $SRC_FILE\n	\$(${COMP_PREFIX}${LANG}) ${MODE_FLAG} \$(${COMP_PREFIX}COMPILERID) \$(${COMP_PREFIX}CPPFLAGS) \$(${COMP_PREFIX}${LANG}FLAGS) \$+ -o \$@\n\n# PREPEND MAKE RULES HERE"
+  else
+      patch_line ${TARGET_DIR}/Makefile "# PREPEND MAKE RULES HERE" "$EXE_FILE: $SRC_FILE\n	\$(${COMP_PREFIX}${LANG}) ${MODE_FLAG} \$(${COMP_PREFIX}COMPILERID) \$(${COMP_PREFIX}CPPFLAGS) \$(${COMP_PREFIX}${LANG}FLAGS) \$+ \$(${COMP_PREFIX}LDFLAGS) \$(${COMP_PREFIX}LDLIBS) -o \$@\n\n# PREPEND MAKE RULES HERE"
+  fi
+
+  # Add EXE_FILE to clean rm -f line
+  patch_string ${TARGET_DIR}/Makefile "	rm -f " "	rm -f $EXE_FILE "
+}
+
+function inst_simple_makefile() 
+{
+  EXE_FILE=$1
+  ICONFIG=$2
+  LANG=$3
+  TARGET_DIR=$4
+  TEMPLATE_FILE=$5
+  SRC_FILE=$6
+  VARIANT_ID=$7
+  shift
+  shift
+  shift
+  shift
+  shift
+  shift
+  shift
+  ENABLE_FEATURES="$@"
+
+
+  initialize_makefile $TARGET_DIR
+
+  add_build_rule 1 "all:" "" "" $EXE_FILE $ICONFIG $LANG $TARGET_DIR $SRC_FILE $VARIANT_ID
+
+  # Make the check line, use srun if MPI based
+  if [[ "$ENABLE_FEATURES" == *USE_MPI* ]]; then 
+    patch_line ${TARGET_DIR}/Makefile "# PREPEND MAKE RULES HERE" "\ncheck:\n	srun -n 2 ./$EXE_FILE 10 .01\n# PREPEND MAKE RULES HERE"
+  else
+    patch_line ${TARGET_DIR}/Makefile "# PREPEND MAKE RULES HERE" "\ncheck:\n	./$EXE_FILE 10 .01\n# PREPEND MAKE RULES HERE"
+  fi
+
+  finalize_makefile  $TARGET_DIR
+
+  echo "Generated ${TARGET_DIR}/Makefile to make $EXE_FILE with '$VARIANT_ID' $ENABLE_FEATURES"
+}
+
+function make_cxx_test() 
+{
+  # Peel first two args off which inst_template doesn't need
+  EXE_FILE=$1
+  CXXCONFIG=$2
+  shift
+  shift
+
+  inst_template "$@"
+  inst_readme $1 readme_cxx_template $EXE_FILE
+  inst_simple_makefile $EXE_FILE $CXXCONFIG CXX "$@"
+  echo " "
+
+}
+
+function make_fort_test() 
+{
+  # Peel first two args off which inst_template doesn't need
+  EXE_FILE=$1
+  FCCONFIG=$2
+  shift
+  shift
+
+  inst_template "$@"
+  inst_readme $1 readme_fort_template $EXE_FILE
+  inst_simple_makefile $EXE_FILE $FCCONFIG FC "$@"
+  echo " "
+
+}
+
+function make_interop_main()
+{
+  # Peel first two args off which inst_template doesn't need
+  EXE_FILE=$1
+  CXXCONFIG=$2
+  shift
+  shift
+
+  inst_template "$@"
+  inst_readme $1 readme_interop_template $EXE_FILE
+  inst_simple_makefile $EXE_FILE $CXXCONFIG CXX "$@"
+  echo " "
+}
+
+
+
+for CONF in cpu_serial cpu_omp gpu_omp gpu_hip gpu_lambda_hip gpu_cuda gpu_lambda_cuda
+do
+  MY_TARGET=TARGET_${CONF^^}
+
+  make_cxx_test rush_larsen_${CONF} ${CONF} ../rush_larsen_${CONF}     rush_larsen_cxx_template.cc rush_larsen_${CONF}.cc "" $MY_TARGET
+  make_cxx_test rush_larsen_${CONF}_mpi ${CONF}_mpi ../rush_larsen_${CONF}_mpi rush_larsen_cxx_template.cc rush_larsen_${CONF}_mpi.cc "" $MY_TARGET USE_MPI
+  echo " "
+done
+
+for CONF in cpu_serial cpu_omp gpu_omp 
+do
+  MY_TARGET=TARGET_${CONF^^}
+
+  make_fort_test rush_larsen_${CONF}_fort ${CONF}_fort ../rush_larsen_${CONF}_fort     rush_larsen_fort_template.F90 rush_larsen_${CONF}_fort.F90     "" $MY_TARGET
+  make_fort_test rush_larsen_${CONF}_mpi_fort ${CONF}_mpi_fort ../rush_larsen_${CONF}_mpi_fort rush_larsen_fort_template.F90 rush_larsen_${CONF}_mpi_fort.F90 "" $MY_TARGET USE_MPI
+  echo " "
+done
+
+echo " --- Generating gpu_interop benchmarks ---"
+echo " "
+
+echo " ----- Generating rush_larsen_interop_gpu_omp_hip benchmarks -----"
+echo " "
+
+function add_cxx_to_interop()
+{
+  FILE_NAME=$1
+  FUNC_NAME=$2
+  echo "  Updated $FILE_NAME with cxx call to $FUNC_NAME"
+  patch_line $FILE_NAME "#undef  ADD_PROTOTYPES_ABOVE_HERE" "        CXXPROTO($FUNC_NAME);\n#undef  ADD_PROTOTYPES_ABOVE_HERE"
+  patch_line $FILE_NAME "#undef  ADD_LAUNCH_CALLS_ABOVE_HERE" "        CXXLAUNCH($FUNC_NAME);\n#undef  ADD_LAUNCH_CALLS_ABOVE_HERE"
+}
+
+function add_fort_to_interop()
+{
+  FILE_NAME=$1
+  FUNC_NAME=$2
+  patch_line $FILE_NAME "#undef  ADD_PROTOTYPES_ABOVE_HERE" "        FORTPROTO($FUNC_NAME);\n#undef  ADD_PROTOTYPES_ABOVE_HERE"
+  patch_line $FILE_NAME "#undef  ADD_LAUNCH_CALLS_ABOVE_HERE" "        FORTLAUNCH($FUNC_NAME);\n#undef  ADD_LAUNCH_CALLS_ABOVE_HERE"
+  echo "  Updated $FILE_NAME with fort call to $FUNC_NAME"
+}
+
+function generate_interop()
+{
+  BENCHMARK=$1
+  INTEROP_ID=$2
+  INTEROP_CONFIG=$3
+  INTEROP_TARGET=$4
+  NUM_COMPILERS=$5
+  NUM_CPU_ONLY=$6
+  
+  echo " -- generate_interop called with '$BENCHMARK' '$INTEROP_TARGET' '$NUM_COMPILERS' '$NUM_CPU_ONLY' --"
+  echo " "
+
+  #make_interop_main ${BENCHMARK} $INTEROP_CONFIG ../${BENCHMARK}     rush_larsen_interop_template.cc ${BENCHMARK}.cc     "" $INTEROP_TARGET 
+  inst_template ../${BENCHMARK}   rush_larsen_interop_template.cc ${BENCHMARK}.cc     "" $INTEROP_TARGET
+  inst_readme ../${BENCHMARK}  readme_interop_template ${BENCHMARK}
+  initialize_makefile ../${BENCHMARK}
+  add_build_rule 1 "all:" "INTEROP_" "" ${BENCHMARK} ${INTEROP_ID}_$INTEROP_CONFIG CXX ../${BENCHMARK} ""  $INTEROP_TARGET
+  add_build_rule 1 "${BENCHMARK}:" "COMPILER1_${INTEROP_CONFIG^^}_" "-c" ${BENCHMARK}.o $INTEROP_CONFIG CXX ../${BENCHMARK} ${BENCHMARK}.cc  $INTEROP_TARGET
+
+  inst_template ../${BENCHMARK}_mpi rush_larsen_interop_template.cc ${BENCHMARK}_mpi.cc "" $INTEROP_TARGET USE_MPI
+  inst_readme ../${BENCHMARK}_mpi  readme_interop_template ${BENCHMARK}_mpi
+  initialize_makefile ../${BENCHMARK}_mpi
+  add_build_rule 1 "all:" "INTEROP_" "" ${BENCHMARK}_mpi ${INTEROP_ID}_${INTEROP_CONFIG}_mpi CXX ../${BENCHMARK}_mpi ""  $INTEROP_TARGET USE_MPI
+  add_build_rule 1 "${BENCHMARK}_mpi:" "COMPILER1_${INTEROP_CONFIG^^}_MPI_" "-c" ${BENCHMARK}_mpi.o ${INTEROP_CONFIG}_mpi CXX ../${BENCHMARK}_mpi ${BENCHMARK}_mpi.cc  $INTEROP_TARGET USE_MPI
+
+  echo " "
+
+  for CONFIG in cpu_omp gpu_omp gpu_hip gpu_lambda_hip 
+do
+MY_TARGET=TARGET_${CONFIG^^}
+
+for CCNUM in $(seq 1 $NUM_COMPILERS) 
+do
+COMP_ID=_compiler${CCNUM}
+# Always add CPU tests and add if not one of the last NUM_CPU_ONLY compilers that need to be CPU only
+if [[ $CONFIG == cpu* ]] || [[ $(($CCNUM + $NUM_CPU_ONLY)) -le $NUM_COMPILERS ]] ; then
+inst_template ../${BENCHMARK}     rush_larsen_cxx_template.cc rush_larsen_${CONFIG}${COMP_ID}.cc     "$COMP_ID" $MY_TARGET NO_MAIN
+add_cxx_to_interop ../${BENCHMARK}/${BENCHMARK}.cc  rush_larsen_${CONFIG}${COMP_ID}
+add_build_rule ${CCNUM} "${BENCHMARK}:" COMPILER${CCNUM}_${CONFIG^^}_ -c rush_larsen_${CONFIG}${COMP_ID}.o $CONFIG CXX ../${BENCHMARK} rush_larsen_${CONFIG}${COMP_ID}.cc ${COMP_ID}
+
+inst_template ../${BENCHMARK}_mpi rush_larsen_cxx_template.cc rush_larsen_${CONFIG}_mpi${COMP_ID}.cc "$COMP_ID" $MY_TARGET NO_MAIN USE_MPI
+add_cxx_to_interop ../${BENCHMARK}_mpi/${BENCHMARK}_mpi.cc  rush_larsen_${CONFIG}_mpi${COMP_ID}
+add_build_rule ${CCNUM} "${BENCHMARK}_mpi:" COMPILER${CCNUM}_${CONFIG^^}_MPI_ -c rush_larsen_${CONFIG}_mpi${COMP_ID}.o ${CONFIG}_mpi CXX ../${BENCHMARK}_mpi rush_larsen_${CONFIG}_mpi${COMP_ID}.cc ${COMP_ID}
+echo " "
+else
+echo " Skipping" ../${BENCHMARK}/rush_larsen_${CONFIG}${COMP_ID}.cc with "$COMP_ID" $MY_TARGET NO_MAIN
+echo " Skipping" ../${BENCHMARK}/rush_larsen_${CONFIG}_mpi${COMP_ID}.cc with "$COMP_ID" $MY_TARGET NO_MAIN USE_MPI
+echo " "
+fi
+done
+done
+
+
+for CONFIG in cpu_omp gpu_omp 
+do
+MY_TARGET=TARGET_${CONFIG^^}
+
+for CCNUM in $(seq 1 $NUM_COMPILERS) 
+do
+COMP_ID=_compiler${CCNUM}
+# Only add tests for compiler1 for fortran.
+# bug only if compiler1 not one of the last NUM_CPU_ONLY compilers that need to be CPU only
+if [[ $CCNUM -eq 1 ]] && ( [[ $CONFIG == cpu* ]] || [[ $(($CCNUM + $NUM_CPU_ONLY)) -le $NUM_COMPILERS ]] ) ; then
+inst_template ../${BENCHMARK}     rush_larsen_fort_template.F90 rush_larsen_${CONFIG}_fort${COMP_ID}.F90     "" $MY_TARGET NO_MAIN APPEND${COMP_ID^^}
+add_fort_to_interop ../${BENCHMARK}/${BENCHMARK}.cc  rush_larsen_${CONFIG}_fort${COMP_ID}
+add_build_rule ${CCNUM} "${BENCHMARK}:" COMPILER${CCNUM}_${CONFIG^^}_FORT_ -c rush_larsen_${CONFIG}_fort${COMP_ID}.o ${CONFIG}_fort FC ../${BENCHMARK} rush_larsen_${CONFIG}_fort${COMP_ID}.F90 ${COMP_ID}
+
+inst_template ../${BENCHMARK}_mpi rush_larsen_fort_template.F90 rush_larsen_${CONFIG}_mpi_fort${COMP_ID}.F90 "" $MY_TARGET NO_MAIN APPEND${COMP_ID^^} USE_MPI
+add_fort_to_interop ../${BENCHMARK}_mpi/${BENCHMARK}_mpi.cc  rush_larsen_${CONFIG}_mpi_fort${COMP_ID}
+add_build_rule ${CCNUM} "${BENCHMARK}_mpi:" COMPILER${CCNUM}_${CONFIG^^}_MPI_FORT_ -c rush_larsen_${CONFIG}_fort${COMP_ID}_mpi.o ${CONFIG}_mpi_fort FC ../${BENCHMARK}_mpi rush_larsen_${CONFIG}_mpi_fort${COMP_ID}.F90 ${COMP_ID}
+echo " "
+else
+echo " Skipping" ../${BENCHMARK}/rush_larsen_${CONFIG}_fort${COMP_ID}.F90 with "$COMP_ID" $MY_TARGET NO_MAIN APPEND${COMP_ID^^}
+echo " Skipping" ../${BENCHMARK}/rush_larsen_${CONFIG}_mpi_fort${COMP_ID}.F90 with "$COMP_ID" $MY_TARGET NO_MAIN APPEND${COMP_ID^^} USE_MPI
+echo " "
+fi
+done
+done
+
+# Make the check line, use srun for MPI version
+patch_line ../${BENCHMARK}/Makefile "# PREPEND MAKE RULES HERE" "\ncheck:\n	./${BENCHMARK} 1 10 .01\n# PREPEND MAKE RULES HERE"
+patch_line ../${BENCHMARK}_mpi/Makefile "# PREPEND MAKE RULES HERE" "\ncheck:\n	srun -n 2 ./${BENCHMARK}_mpi 1 10 .01\n# PREPEND MAKE RULES HERE"
+
+finalize_makefile  ../${BENCHMARK}
+finalize_makefile  ../${BENCHMARK}_mpi
+
+echo " -- Done with generate_interop called with '$BENCHMARK' '$INTEROP_TARGET' '$NUM_COMPILERS' '$NUM_CPU_ONLY' --"
+echo " "
+}
+
+generate_interop rush_larsen_interop2_cpu_omp INTEROP2 CPU_OMP TARGET_CPU_OMP 2 2
+generate_interop rush_larsen_interop3_cpu_omp INTEROP2 CPU_OMP TARGET_CPU_OMP 3 3
+generate_interop rush_larsen_interop1_gpu_omp_hip INTEROP1 GPU_OMP_HIP TARGET_GPU_OMP_HIP 1 0
+generate_interop rush_larsen_interop1.5_gpu_omp_hip INTEROP1.5 GPU_OMP_HIP TARGET_GPU_OMP_HIP 2 1
+generate_interop rush_larsen_interop2_gpu_omp_hip INTEROP2 GPU_OMP_HIP TARGET_GPU_OMP_HIP 2 0
+generate_interop rush_larsen_interop2.5_gpu_omp_hip INTEROP2 GPU_OMP_HIP TARGET_GPU_OMP_HIP 3 1
+
+echo "Done generating rush_larsen variants"
